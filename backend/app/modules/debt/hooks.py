@@ -56,10 +56,10 @@ def pin_generation(c, week_id, days=7):
     frozen = 1 if len(mids) < MIN_ACTIVE_TO_SETTLE else 0
     balances = prior_balances(c, week_id, mids)
 
-    # 回包/台账仍按债前优先演算，落库格位却按无债编排
-    preview_slots = assign_with_debt(mids, tasks, days=days, debt_before=balances)
-    rows = settle(mids, preview_slots, balances, frozen=bool(frozen))
-    slots = assign_with_debt(mids, tasks, days=days, debt_before={})
+    # 单轨演算：落库占格、钉账台账、生成回包必须同源于这一份带债结果，
+    # 不得再跑无债编排，否则看板占格与债后优先口径必然分叉。
+    slots = assign_with_debt(mids, tasks, days=days, debt_before=balances)
+    rows = settle(mids, slots, balances, frozen=bool(frozen))
 
     c.execute("DELETE FROM assignments WHERE week_id=?", (week_id,))
     c.executemany(
@@ -79,4 +79,4 @@ def pin_generation(c, week_id, days=7):
     debts = []
     for r in rows:
         debts.append({**r, "member_name": names.get(r["member_id"], "?")})
-    return {"count": len(preview_slots), "frozen": frozen, "slots": preview_slots, "debts": debts}
+    return {"count": len(slots), "frozen": frozen, "slots": slots, "debts": debts}
