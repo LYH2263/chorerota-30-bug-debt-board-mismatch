@@ -46,6 +46,7 @@
         </tr>
       </tbody>
     </table>
+    <p v-else-if="ledger.frozen" class="muted ledger-note">冻结周 · 活跃成员不足（或全员 skip），本周不结算债务，余额原样结转。</p>
     <p v-else-if="week && week.status === 'ready'" class="muted ledger-note">该周为旧版周表，未钉债务账。</p>
     <p v-if="ledger.pinned" class="muted ledger-note">占用为落定快照；对调不改已钉债，下周记债只认钉账。</p>
   </div>
@@ -87,5 +88,3 @@ async function nextWeek() {
 }
 onMounted(async () => { await loadWeeks(); await load() })
 </script>
-
-<!-- debt projection soft fork -->

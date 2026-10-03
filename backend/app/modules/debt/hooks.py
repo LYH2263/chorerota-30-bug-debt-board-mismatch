@@ -2,6 +2,8 @@
 
 只操作路由传入的 sqlite 连接；week 是否存在、commit/close 由路由负责。
 钉后不可重新生成（WeekSettledError -> 409）；对调永不重算台账。
+占格只编排一次：落库 assignments、debt_entries 结算行、生成回包三者同源，
+看板占格与回包债后优先口径必然一致。
 """
 
 from app.modules.debt.engine import assign_with_debt, settle
@@ -46,9 +48,12 @@ def pin_generation(c, week_id, days=7):
     """生成并落钉一周。成功返回生成回包（含 debts 钉账行）；不 commit。"""
     if days < MIN_DAYS or days > MAX_DAYS:
         raise BadDaysError(f"days must be in [{MIN_DAYS},{MAX_DAYS}]")
-    pinned = c.execute(
-        "SELECT 1 FROM debt_entries WHERE week_id=? LIMIT 1", (week_id,)).fetchone()
-    if pinned:
+    # 锁定以 weeks.status 为准：冻结周/全员 skip 周没有台账行，
+    # 只查 debt_entries 会漏锁，导致占格被重复生成重算。
+    week = c.execute("SELECT status FROM weeks WHERE id=?", (week_id,)).fetchone()
+    if week is None:
+        raise WeekSettledError(f"week {week_id} not found")
+    if week["status"] == "ready":
         raise WeekSettledError(f"week {week_id} already settled")
 
     mids = active_clean_member_ids(c)
@@ -56,10 +61,10 @@ def pin_generation(c, week_id, days=7):
     frozen = 1 if len(mids) < MIN_ACTIVE_TO_SETTLE else 0
     balances = prior_balances(c, week_id, mids)
 
-    # 回包/台账仍按债前优先演算，落库格位却按无债编排
-    preview_slots = assign_with_debt(mids, tasks, days=days, debt_before=balances)
-    rows = settle(mids, preview_slots, balances, frozen=bool(frozen))
-    slots = assign_with_debt(mids, tasks, days=days, debt_before={})
+    # 唯一一次编排：按债前余额优先派格（欠债者优先得格偿还）。
+    # settle 结算行、落库占格、生成回包全部取自这同一份 slots，三路必然同钉。
+    slots = assign_with_debt(mids, tasks, days=days, debt_before=balances)
+    rows = settle(mids, slots, balances, frozen=bool(frozen))
 
     c.execute("DELETE FROM assignments WHERE week_id=?", (week_id,))
     c.executemany(
@@ -79,4 +84,4 @@ def pin_generation(c, week_id, days=7):
     debts = []
     for r in rows:
         debts.append({**r, "member_name": names.get(r["member_id"], "?")})
-    return {"count": len(preview_slots), "frozen": frozen, "slots": preview_slots, "debts": debts}
+    return {"count": len(slots), "frozen": frozen, "slots": slots, "debts": debts}

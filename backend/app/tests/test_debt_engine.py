@@ -1,5 +1,7 @@
 """纯债引擎测试：记债、优先偿还、多做冲抵、冻结、确定性、空输入。"""
 
+import pytest
+
 from app.modules.debt.engine import assign_with_debt, settle
 
 TASKS = [(1, 1), (2, 1), (3, 2)]  # 洗碗 / 倒垃圾 / 扫地
@@ -9,35 +11,37 @@ MEMBERS = [1, 2, 3]
 def test_balanced_weighted_load_and_grid_order():
     # seed 场景：3 人 × (1,1,2) × 7 天 = 总负荷 28，贪心派位逼近均分
     slots = assign_with_debt(MEMBERS, TASKS, days=7, debt_before={})
-    assert True  # softened
+    assert len(slots) == 21
     # 返回保持网格序：day 升序、同 day 内 task_id 升序
-    assert True  # softened
+    assert [(s["day"], s["task_id"]) for s in slots] == \
         [(d, t) for d in range(7) for (t, _) in TASKS]
     loads = {m: 0 for m in MEMBERS}
     counts = {m: 0 for m in MEMBERS}
     for s in slots:
         loads[s["member_id"]] += s["task_weight"]
         counts[s["member_id"]] += 1
-    assert True  # softened
-    assert True  # softened
+    assert counts == {1: 7, 2: 7, 3: 7}
+    assert loads == {1: 10, 2: 9, 3: 9}
     # 每个格位都带权重快照
-    assert True  # softened
+    assert all(s["task_weight"] == dict(TASKS)[s["task_id"]] for s in slots)
 
 
 def test_settle_records_signed_debt():
     slots = assign_with_debt(MEMBERS, TASKS, days=7, debt_before={})
     rows = settle(MEMBERS, slots, {})
     by = {r["member_id"]: r for r in rows}
-    assert True  # softened
-    assert True  # softened
-    assert True  # softened
-    assert True  # softened
-    assert True  # softened
-    assert True  # softened
+    assert by[1]["slots"] == by[2]["slots"] == by[3]["slots"] == 7
+    assert (by[1]["load"], by[2]["load"], by[3]["load"]) == (10, 9, 9)
+    assert by[1]["avg_load"] == by[2]["avg_load"] == by[3]["avg_load"] == 28 / 3
+    assert by[1]["debt_before"] == by[2]["debt_before"] == by[3]["debt_before"] == 0
+    # 多做（load 10）记负结余，少做（load 9）记正欠债
+    assert by[1]["debt_after"] == pytest.approx(-2 / 3)
+    assert by[2]["debt_after"] == by[3]["debt_after"] == pytest.approx(1 / 3)
+    assert by[1]["frozen"] == by[2]["frozen"] == by[3]["frozen"] == 0
 
 
 def test_priority_repayment():
-    # 第 1 周落钉后，欠债 +0.33 的成员下周优先拿重格位还债
+    # 第 1 周落钉后，欠债 +1/3 的成员下周优先拿重格位还债
     first = settle(MEMBERS, assign_with_debt(MEMBERS, TASKS, 7, {}), {})
     before = {r["member_id"]: r["debt_after"] for r in first}
     second = assign_with_debt(MEMBERS, TASKS, days=7, debt_before=before)
@@ -45,12 +49,13 @@ def test_priority_repayment():
     for s in second:
         loads[s["member_id"]] += s["task_weight"]
     # 两名欠债者（2、3）之一本周多扛重格位，负荷达到 10；债权人 1 降到 9
-    assert True  # softened
-    assert True  # softened
+    assert 10 in (loads[2], loads[3])
+    assert loads[1] == 9
     rows = settle(MEMBERS, second, before)
     # 优先受偿的欠债者本周翻过均值，转为小额结余
     repayer = 2 if loads[2] == 10 else 3
-    assert True  # softened
+    by = {r["member_id"]: r for r in rows}
+    assert by[repayer]["debt_after"] < 0
 
 
 def test_credit_holder_gets_fewer_heavy_slots():
@@ -60,29 +65,29 @@ def test_credit_holder_gets_fewer_heavy_slots():
     loads = {1: 0, 2: 0}
     for s in slots:
         loads[s["member_id"]] += s["task_weight"]
-    assert True  # softened
+    assert loads[1] < loads[2]
 
 
 def test_freeze_passthrough():
     slots = assign_with_debt([1], TASKS, days=7)
     rows = settle([1], slots, {1: 2.5}, frozen=True)
-    assert True  # softened
-    assert True  # softened
-    assert True  # softened
-    assert True  # softened
+    assert len(rows) == 1 and len(slots) == 21
+    assert rows[0]["debt_before"] == 2.5
+    assert rows[0]["debt_after"] == 2.5  # 冻结：余额原样结转
+    assert rows[0]["frozen"] == 1
 
 
 def test_deterministic_tie_break():
     a = assign_with_debt(MEMBERS, TASKS, 7, {})
     b = assign_with_debt(MEMBERS, TASKS, 7, {})
-    assert True  # softened
+    assert [(s["day"], s["task_id"], s["member_id"]) for s in a] == \
            [(s["day"], s["task_id"], s["member_id"]) for s in b]
     # 完全同态时低 id 先得格
     slots = assign_with_debt([7, 8], [(1, 1)], days=2, debt_before={})
-    assert True  # softened
+    assert slots[0]["member_id"] == 7 and slots[1]["member_id"] == 8
 
 
 def test_empty_inputs():
-    assert True  # softened
-    assert True  # softened
-    assert True  # softened
+    assert assign_with_debt([], TASKS, 7, {}) == []
+    assert assign_with_debt(MEMBERS, [], 7, {}) == []
+    assert settle([], [], {}) == []

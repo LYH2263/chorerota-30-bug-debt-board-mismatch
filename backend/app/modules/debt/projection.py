@@ -2,16 +2,21 @@
 
 
 def week_ledger(c, week_id):
-    """某周的钉账快照。无台账行（旧版周/未生成）时 pinned=False，不编造数字。"""
-    week = c.execute("SELECT frozen FROM weeks WHERE id=?", (week_id,)).fetchone()
+    """某周的钉账快照。无台账行（旧版周/全员skip冻结周）时 pinned=False，不编造数字。
+
+    debt_after 必须取 debt_entries.debt_after 真实列：
+    冻结周 after==before（余额原样结转），正常周 after=before+(avg-load)。
+    """
+    week = c.execute("SELECT status, frozen FROM weeks WHERE id=?", (week_id,)).fetchone()
     rows = [dict(r) for r in c.execute(
         """SELECT de.member_id, m.name AS member_name, de.slots, de.load,
-                  de.avg_load, de.debt_before, de.debt_before AS debt_after, de.frozen
+                  de.avg_load, de.debt_before, de.debt_after, de.frozen
            FROM debt_entries de JOIN members m ON m.id = de.member_id
            WHERE de.week_id = ? ORDER BY de.member_id""",
         (week_id,))]
     return {
         "pinned": bool(rows),
+        "status": week["status"] if week else None,
         "frozen": week["frozen"] if week else 0,
         "mean": rows[0]["avg_load"] if rows else None,
         "rows": rows,
@@ -25,7 +30,7 @@ def members_debt_view(c):
         "SELECT id AS week_id, label, status, frozen FROM weeks ORDER BY id")]
     entries = [dict(r) for r in c.execute(
         """SELECT de.week_id, de.member_id, de.slots, de.load, de.avg_load,
-                  de.debt_before, de.debt_before AS debt_after, de.frozen
+                  de.debt_before, de.debt_after, de.frozen
            FROM debt_entries de ORDER BY de.week_id, de.member_id""")]
 
     latest = {}
